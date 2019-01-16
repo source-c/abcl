@@ -1,6 +1,6 @@
 ;;;; The ABCL specific overrides in ASDF.  
 ;;;;
-;;;; Done separately from asdf.lisp for stability.
+;;;; Extensions to ASDF for use by ABCL
 (require :asdf)
 (in-package :asdf)
 
@@ -14,17 +14,12 @@
 (defclass mvn (iri) 
   ((group-id :initarg :group-id :initform nil)
    (artifact-id :initarg :artifact-id :initform nil)
-   (repository :initarg :repository :initform "http://repo1.maven.org/maven2/") ;;; XXX unimplemented
+   (repositories :initarg :repositories :initform nil)
    (resolved-classpath :initform nil :accessor resolved-classpath)
    (classname :initarg :classname :initform nil)
    (alternate-uri :initarg :alternate-uri :initform nil)
    ;; inherited from ASDF:COMPONENT ??? what are the CL semantics on overriding -- ME 2012-04-01
    #+nil   (version :initform nil)))
-
-#+nil
-(defmethod find-component ((component iri) path)
-  component)
-
 
 ;;; We intercept compilation to ensure that load-op will succeed
 (defmethod perform ((op compile-op) (c mvn))
@@ -60,7 +55,7 @@
 
 (defun ensure-parsed-mvn (component)
   (with-slots (name group-id artifact-id
-                    version schema path repository) 
+                    version schema path repositories)
       component
     (when (null asdf::artifact-id) 
       (let ((parsed (abcl-asdf::split-string name "/"))
@@ -82,8 +77,8 @@
                (error "Failed to construct a mvn reference from name '~A' and version '~A'"
                       name version)))
         (setf schema "mvn")
-        (when repository
-          (pushnew repository *mvn-repositories*))
+        (when repositories
+          (setf *mvn-repositories* (union repositories *mvn-repositories* :test #'string=)))
         ;;; Always set path to normalized path "on the way out" to
         ;;; contain group-id/artifact-id/version
         ;;; TODO? record repository as well in path of component
@@ -112,13 +107,13 @@ Returns either a string in jvm classpath format as entries delimited
 by classpath separator string or T.  If the value T is returned, it
 denotes that current JVM already has already loaded a given class. Can possibly be a
 single entry denoting a remote binary artifact."
-  (asdf:ensure-parsed-mvn mvn-component)
+  (asdf::ensure-parsed-mvn mvn-component)
   (let ((name (slot-value mvn-component 'asdf::name))
         (group-id (slot-value mvn-component 'asdf::group-id))
         (artifact-id (slot-value mvn-component 'asdf::artifact-id))
         (classname (slot-value mvn-component 'asdf::classname))
         (alternate-uri (slot-value mvn-component 'asdf::alternate-uri))
-        (repository (slot-value mvn-component 'asdf::repository))
+        (repositories (slot-value mvn-component 'asdf::repositories))
         (version (if (slot-value mvn-component 'asdf::version)
                      (slot-value mvn-component 'asdf::version)
                      "LATEST")))
@@ -135,7 +130,7 @@ single entry denoting a remote binary artifact."
     (if (find-mvn)
         (resolve-dependencies group-id artifact-id
                               :version version
-                              :repository repository)
+                              :repositories repositories)
         (if alternate-uri
             (values (pathname alternate-uri) alternate-uri) 
             (error "Failed to resolve MVN component name ~A." name)))))
@@ -148,8 +143,3 @@ single entry denoting a remote binary artifact."
   (split-string classpath 
                 (java:jfield "java.io.File" "pathSeparator")))
 
-(defun split-string (string split-char)
-  (loop :for i = 0 :then (1+ j)
-     :as j = (position split-char string :test #'string-equal :start i)
-     :collect (subseq string i j)
-     :while j))

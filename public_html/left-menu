@@ -5,7 +5,7 @@
         <a href="./">Main</a>
       </li>
       <li>
-        <a href="./releases/1.4.0/abcl-1.4.0.pdf">Manual<smaller>[pdf]</smaller></a>
+        <a href="./releases/1.5.0/abcl-1.5.0.pdf">Manual<smaller>[pdf]</smaller></a>
       </li>
       <li>
         <a href="./faq.shtml">FAQ</a>
@@ -14,21 +14,19 @@
         <a href="./testimonials.shtml">Testimonials</a>
       </li>
       <li>
-        <a href="./release-notes-1.4.0.shtml">Release notes</a>
+        <a href="./release-notes-1.5.0.shtml">Release notes</a>
       </li>
       <li>
         <a href="./commercial-support.shtml">Paid support</a>
       </li>
-
       <li> 
         <a href="http://armedbear-j.sourceforge.net">J - the editor</a>
+      </li>
+      <li><smaller>
+        [ <a href="http://abcl.org/svn/">SVN</a> | <a href="https://gitlab.common-lisp.net/abcl/abcl/">Gitlab</a> | <a href="https://github.com/armedbear/abcl/">GitHub</a> ]
+      </smaller>
       </li>
     </ul>
   </div>
 
-  <div id="oloh-button">
-    <script type="text/javascript"
-            src="http://www.ohloh.net/p/16553/widgets/project_users_logo.js">
-    </script>
-  </div>
 </div>

@@ -1725,6 +1725,7 @@ compare the method combination name to the symbol 'standard.")
         ',function-name
         :lambda-list ',lambda-list
         ,@(canonicalize-defgeneric-options options))
+       (sys::record-source-information-for-type ',function-name '(:generic-function ,function-name))
        ,@methods)))
 
 (defun canonicalize-defgeneric-options (options)
@@ -2189,8 +2190,12 @@ Initialized with the true value near the end of the file.")
       (clrhash *make-instance-initargs-cache*)
       (clrhash *reinitialize-instance-initargs-cache*))
     (if gf
-        (check-method-lambda-list name method-lambda-list
-                                  (generic-function-lambda-list gf))
+	(restart-case
+	    (check-method-lambda-list name method-lambda-list
+				      (generic-function-lambda-list gf))
+	  (unbind-and-try-again () :report (lambda(s) (format s "Undefine generic function #'~a and continue" name))
+	    (fmakunbound name)
+	    (setf gf (ensure-generic-function name :lambda-list method-lambda-list))))
         (setf gf (ensure-generic-function name :lambda-list method-lambda-list)))
     (let ((method
            (if (eq (generic-function-method-class gf) +the-standard-method-class+)
@@ -2891,6 +2896,7 @@ to ~S with argument list ~S."
                (push `',specializer specializers-form))))
       (setf specializers-form `(list ,@(nreverse specializers-form)))
       `(progn
+	 (sys::record-source-information-for-type ',function-name '(:method ,function-name ,qualifiers ,specializers))
          (ensure-method ',function-name
                         :lambda-list ',lambda-list
                         :qualifiers ',qualifiers
@@ -3033,6 +3039,13 @@ generic functions without providing sensible behaviour."
   (let ((temp-sym (gensym)))
     `(progn
        (defgeneric ,temp-sym ,@rest)
+       (sys::record-source-information-for-type ',function-name '(:generic-function ,function-name))
+       ,@(loop for method-form in rest
+	       when (eq (car method-form) :method)
+		    collect
+		    (multiple-value-bind (function-name qualifiers lambda-list specializers documentation declarations body) 
+			(mop::parse-defmethod `(,function-name ,@(rest method-form)))
+		      `(sys::record-source-information-for-type ',function-name '(:method ,function-name ,qualifiers ,specializers))))
        (let ((gf (symbol-function ',temp-sym)))
          ;; FIXME (rudi 2012-07-08): fset gets the source location info
          ;; to charpos 23 always (but (setf fdefinition) leaves the
@@ -3238,12 +3251,14 @@ instance and, for setters, `new-value' the new value."
   (unless (>= (length form) 3)
     (error 'program-error "Wrong number of arguments for DEFCLASS."))
   (check-declaration-type name)
-  `(ensure-class ',name
+  `(progn
+     (sys::record-source-information-for-type ',name :class)
+     (ensure-class ',name
                  :direct-superclasses
                  (canonicalize-direct-superclasses ',direct-superclasses)
                  :direct-slots
                  ,(canonicalize-direct-slots direct-slots)
-                 ,@(canonicalize-defclass-options options)))
+                 ,@(canonicalize-defclass-options options))))
 
 
 ;;; AMOP pg. 180
@@ -3683,12 +3698,12 @@ or T when any keyword is acceptable due to presence of
       (multiple-value-bind (init-key init-value foundp)
           (get-properties all-keys (slot-definition-initargs slot))
         (if foundp
-            (setf (std-slot-value instance slot-name) init-value)
-            (unless (std-slot-boundp instance slot-name)
+            (setf (slot-value instance slot-name) init-value)
+            (unless (slot-boundp instance slot-name)
               (let ((initfunction (slot-definition-initfunction slot)))
                 (when (and initfunction (or (eq slot-names t)
                                             (memq slot-name slot-names)))
-                  (setf (std-slot-value instance slot-name)
+                  (setf (slot-value instance slot-name)
                         (funcall initfunction)))))))))
   instance)
 
@@ -4127,10 +4142,12 @@ or T when any keyword is acceptable due to presence of
     (typecase report
       (null
        `(progn
+	  (sys::record-source-information-for-type  ',name :condition)
           (defclass ,name ,parent-types ,slot-specs ,@options)
           ',name))
       (string
        `(progn
+	  (sys::record-source-information-for-type  ',name :condition)
           (defclass ,name ,parent-types ,slot-specs ,@options)
           (defmethod print-object ((condition ,name) stream)
             (if *print-escape*
@@ -4139,6 +4156,7 @@ or T when any keyword is acceptable due to presence of
           ',name))
       (t
        `(progn
+	  (sys::record-source-information-for-type  ',name :condition)
           (defclass ,name ,parent-types ,slot-specs ,@options)
           (defmethod print-object ((condition ,name) stream)
             (if *print-escape*
@@ -4299,16 +4317,18 @@ or T when any keyword is acceptable due to presence of
 
 (defmethod shared-initialize :after ((instance standard-generic-function)
                                      slot-names
-                                     &key lambda-list argument-precedence-order
+                                     &key (lambda-list nil lambda-list-p)
+                                       (argument-precedence-order nil a-p-o-p)
                                        (method-combination '(standard))
                                      &allow-other-keys)
-  (let* ((plist (analyze-lambda-list lambda-list))
-         (required-args (getf plist ':required-args)))
-    (setf (std-slot-value instance 'sys::required-args) required-args)
-    (setf (std-slot-value instance 'sys::optional-args)
-          (getf plist :optional-args)) 
-    (setf (std-slot-value instance 'sys::argument-precedence-order)
-          (or argument-precedence-order required-args)))
+  (when lambda-list-p
+    (let* ((plist (analyze-lambda-list lambda-list))
+           (required-args (getf plist ':required-args)))
+      (setf (std-slot-value instance 'sys::required-args) required-args)
+      (setf (std-slot-value instance 'sys::optional-args)
+            (getf plist :optional-args))
+      (setf (std-slot-value instance 'sys::argument-precedence-order)
+            (or (and a-p-o-p argument-precedence-order) required-args))))
   (unless (typep (generic-function-method-combination instance)
                  'method-combination)
     ;; this fixes (make-instance 'standard-generic-function) -- the
@@ -4533,9 +4553,10 @@ or T when any keyword is acceptable due to presence of
                  (eq 'setf (first function-name))
                  (autoload-ref-p (second function-name))))
         (fmakunbound function-name)
-        (error 'program-error
-               :format-control "~A already names an ordinary function, macro, or special operator."
-               :format-arguments (list function-name))))
+	(progn
+	  (cerror "Redefine as generic function" "~A already names an ordinary function, macro, or special operator." function-name)
+	  (fmakunbound function-name)
+	  )))
   (apply (if (eq generic-function-class +the-standard-generic-function-class+)
              #'make-instance-standard-generic-function
              #'make-instance)
